@@ -1069,6 +1069,49 @@ check_new_caps (GstMatroskaTrackVideoContext * videocontext, GstCaps * old_caps,
   return ret;
 }
 
+static gboolean
+gst_matroska_mux_caps_is_subset (GstMatroskaMux * mux, GstCaps * subset,
+    GstCaps * superset)
+{
+  GstStructure *sub_s = gst_caps_get_structure (subset, 0);
+  GstStructure *sup_s = gst_caps_get_structure (superset, 0);
+
+  if (!gst_structure_has_name (sup_s, gst_structure_get_name (sub_s)))
+    return FALSE;
+
+  return gst_structure_foreach (sub_s, check_field, sup_s);
+}
+
+static gboolean
+gst_matroska_mux_can_renegotiate_caps (GstMatroskaMux * mux, GstPad * pad,
+    GstCaps * new_caps)
+{
+  GstCaps *old_caps = gst_pad_get_current_caps (pad);
+
+  if (mux->state < GST_MATROSKA_MUX_STATE_HEADER)
+    return TRUE;
+
+  if (!old_caps) {
+    /* we can't add caps to an already running mux */
+    GST_ELEMENT_ERROR (mux, STREAM, MUX, (NULL),
+        ("Caps on pad %" GST_PTR_FORMAT
+            " arrived late. Headers were already written", pad));
+    return FALSE;
+  }
+
+  if (!gst_matroska_mux_caps_is_subset (mux, new_caps, old_caps)) {
+    GST_ELEMENT_ERROR (mux, STREAM, MUX, (NULL),
+        ("Most caps changes are not supported by Matroska\nCurrent: `%"
+            GST_PTR_FORMAT "`\nNew: `%" GST_PTR_FORMAT "`", old_caps,
+            new_caps));
+    gst_caps_unref (old_caps);
+    return FALSE;
+  }
+
+  gst_caps_unref (old_caps);
+  return TRUE;
+}
+
 /**
  * gst_matroska_mux_video_pad_setcaps:
  * @pad: Pad which got the caps.
@@ -1105,22 +1148,8 @@ gst_matroska_mux_video_pad_setcaps (GstPad * pad, GstCaps * caps)
   g_assert (context->type == GST_MATROSKA_TRACK_TYPE_VIDEO);
   videocontext = (GstMatroskaTrackVideoContext *) context;
 
-  if ((old_caps = gst_pad_get_current_caps (pad))) {
-    if (mux->state >= GST_MATROSKA_MUX_STATE_HEADER
-        && !check_new_caps (videocontext, old_caps, caps)) {
-      GST_ELEMENT_ERROR (mux, STREAM, MUX, (NULL),
-          ("Caps changes are not supported by Matroska\nCurrent: `%"
-              GST_PTR_FORMAT "`\nNew: `%" GST_PTR_FORMAT "`", old_caps, caps));
-      gst_caps_unref (old_caps);
-      goto refuse_caps;
-    }
-    gst_caps_unref (old_caps);
-  } else if (mux->state >= GST_MATROSKA_MUX_STATE_HEADER) {
-    GST_ELEMENT_ERROR (mux, STREAM, MUX, (NULL),
-        ("Caps on pad %" GST_PTR_FORMAT
-            " arrived late. Headers were already written", pad));
+  if (!gst_matroska_mux_can_renegotiate_caps (mux, pad, caps))
     goto refuse_caps;
-  }
 
   /* gst -> matroska ID'ing */
   structure = gst_caps_get_structure (caps, 0);
