@@ -1,4 +1,4 @@
-# GStreamer
+# GStreamer (Forked from gitlab.freedesktop.org/gstreamer/gstreamer)
 
 This is GStreamer, a framework for streaming media.
 
